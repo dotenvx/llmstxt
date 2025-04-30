@@ -98,6 +98,12 @@ function capitalizeString(str) {
   return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase()
 }
 
+function cleanTitle(title) {
+  if (!title) return '';
+  // Remove leading '|' and whitespace
+  return title.replace(/^\|\s*/, '').trim();
+}
+
 async function gen (sitemapUrl) {
   const options = this.opts()
 
@@ -145,7 +151,7 @@ async function gen (sitemapUrl) {
       for (command of replaceTitle) {
         title = substituteTitle(title, command)
       }
-      title = title.trim()
+      title = cleanTitle(title)
 
       // description
       const description = await getDescription(html)
@@ -170,17 +176,21 @@ async function gen (sitemapUrl) {
   let output = ''
 
   // handle root
-  const root = sections.ROOT
+  const root = sections.ROOT || []
   delete sections.ROOT
 
-  output += `# ${options.title || root[0].title}`
+  // Default values if root doesn't exist
+  const defaultTitle = options.title || 'Documentation'
+  const defaultDescription = options.description || 'Generated documentation'
+
+  output += `# ${options.title || (root.length > 0 ? root[0].title : defaultTitle)}`
   output += '\n'
   output += '\n'
-  output += `> ${options.description || root[0].description}`
+  output += `> ${options.description || (root.length > 0 ? root[0].description : defaultDescription)}`
   output += '\n'
   output += '\n'
 
-  spinner.text = options.title || root[0].title
+  spinner.text = options.title || (root.length > 0 ? root[0].title : defaultTitle)
 
   // handle sections
   for (const section in sections) {
@@ -189,7 +199,7 @@ async function gen (sitemapUrl) {
     for (const line of sections[section]) {
       const { title, url, description } = line
       output += '\n'
-      output += `- [${title}](${url}): ${description}`
+      output += `- [${title}](${url})${description ? ': ' + description : ''}`
 
       spinner.text = title
     }
