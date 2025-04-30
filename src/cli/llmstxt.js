@@ -21,6 +21,7 @@ program.command('gen')
   .option('-rt, --replace-title <replaceTitle...>', 'replace string(s) from title (default: none)')
   .option('-t, --title <title>', 'set title (default: root page title)')
   .option('-d, --description <description>', 'set description (default: root page description)')
+  .option('-c, --concurrency <concurrency>', 'maximum number of concurrent connections (default: 5)', parseInt)
   .action(genAction)
 
 program.parse()
