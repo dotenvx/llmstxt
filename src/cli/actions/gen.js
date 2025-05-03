@@ -98,6 +98,41 @@ function capitalizeString(str) {
   return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase()
 }
 
+function cleanTitle(title) {
+  if (!title) return '';
+  // Remove leading '|' and whitespace
+  return title.replace(/^\|\s*/, '').trim();
+}
+
+/**
+ * Process URLs in batches with limited concurrency
+ * @param {Array} items - Array of items to process
+ * @param {Function} processor - Async function to process each item
+ * @param {number} concurrency - Maximum number of concurrent operations
+ * @returns {Array} - Results array
+ */
+async function processInBatches(items, processor, concurrency = 10) {
+  const results = [];
+  const totalItems = items.length;
+  let processedItems = 0;
+
+  // Process items in batches
+  for (let i = 0; i < totalItems; i += concurrency) {
+    const batch = items.slice(i, i + concurrency);
+    const batchPromises = batch.map(async (item, index) => {
+      const result = await processor(item, i + index);
+      processedItems++;
+      return result;
+    });
+
+    // Wait for the current batch to complete
+    const batchResults = await Promise.all(batchPromises);
+    results.push(...batchResults);
+  }
+
+  return results.filter(Boolean); // Remove null/undefined results
+}
+
 async function gen (sitemapUrl) {
   const options = this.opts()
 
@@ -113,55 +148,65 @@ async function gen (sitemapUrl) {
   const replaceTitle = options.replaceTitle || []
 
   const sections = {}
+  const concurrency = options.concurrency || 5
 
   try {
     spinner.text = sitemapUrl
     const sites = await sitemap.fetch(sitemapUrl)
-
-    for (const url of sites.sites) {
-      spinner.text = url
+    
+    // Define the URL processor function
+    const processUrl = async (url, index) => {
+      spinner.text = `Processing [${index + 1}/${sites.sites.length}]: ${url}`
 
       // path excluded - don't process it
       if (isExcluded(url)) {
-        continue
+        return null;
       }
 
       // path effectively excluded (by not being in the list of includes) - don't process it
       if (includePaths.length > 0 && !isIncluded(url)) {
-        continue
+        return null;
       }
 
       // html
       const html = await fetchHtml(url)
       if (!html) {
-        continue
+        return null;
       }
 
       // title
       let title = await getTitle(html)
       if (!title) {
-        continue
+        return null;
       }
       for (command of replaceTitle) {
         title = substituteTitle(title, command)
       }
-      title = title.trim()
+      title = cleanTitle(title)
 
       // description
       const description = await getDescription(html)
 
-      const line = {
-        title,
-        url,
-        description
-      }
-
-      // set up section
+      // section
       const section = parseSection(url)
+      
+      return { title, url, description, section };
+    };
+
+    // Process URLs concurrently
+    const results = await processInBatches(sites.sites, processUrl, concurrency);
+    
+    // Organize results into sections
+    for (const result of results) {
+      if (!result) continue;
+      
+      const { title, url, description, section } = result;
+      
+      // set up section
       sections[section] ||= []
 
       // add line
-      sections[section].push(line)
+      sections[section].push({ title, url, description });
     }
   } catch (error) {
     console.error('Error processing sitemap:', error.message)
@@ -170,17 +215,21 @@ async function gen (sitemapUrl) {
   let output = ''
 
   // handle root
-  const root = sections.ROOT
+  const root = sections.ROOT || []
   delete sections.ROOT
 
-  output += `# ${options.title || root[0].title}`
+  // Default values if root doesn't exist
+  const defaultTitle = options.title || 'Documentation'
+  const defaultDescription = options.description || 'Generated documentation'
+
+  output += `# ${options.title || (root.length > 0 ? root[0].title : defaultTitle)}`
   output += '\n'
   output += '\n'
-  output += `> ${options.description || root[0].description}`
+  output += `> ${options.description || (root.length > 0 ? root[0].description : defaultDescription)}`
   output += '\n'
   output += '\n'
 
-  spinner.text = options.title || root[0].title
+  spinner.text = options.title || (root.length > 0 ? root[0].title : defaultTitle)
 
   // handle sections
   for (const section in sections) {
@@ -189,7 +238,7 @@ async function gen (sitemapUrl) {
     for (const line of sections[section]) {
       const { title, url, description } = line
       output += '\n'
-      output += `- [${title}](${url}): ${description}`
+      output += `- [${title}](${url})${description ? ': ' + description : ''}`
 
       spinner.text = title
     }
