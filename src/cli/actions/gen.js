@@ -5,6 +5,7 @@ const { request } = require('undici')
 const Sitemapper = require('sitemapper')
 const sitemap = new Sitemapper()
 const ora = require('ora')
+const TurndownService = require('turndown')
 
 async function fetchHtml (url) {
   try {
@@ -250,4 +251,99 @@ async function gen (sitemapUrl) {
   console.log(output)
 }
 
-module.exports = gen
+async function genFull(sitemapUrl) {
+  const options = this.opts ? this.opts() : {};
+  const spinner = ora('generating full content').start();
+  const excludePaths = options.excludePath || [];
+  const includePaths = options.includePath || [];
+  const isExcluded = picomatch(excludePaths);
+  const isIncluded = picomatch(includePaths, { ignore: excludePaths });
+  const replaceTitle = options.replaceTitle || [];
+  const concurrency = options.concurrency || 5;
+  // Configure Turndown for better markdown
+  const turndownService = new TurndownService({
+    codeBlockStyle: 'fenced',
+    headingStyle: 'atx',
+    bulletListMarker: '-',
+    emDelimiter: '*',
+    hr: '---',
+  });
+  turndownService.addRule('table', {
+    filter: 'table',
+    replacement: function(content, node) {
+      return '\n' + turndownService.turndown(node.outerHTML) + '\n';
+    }
+  });
+  let output = '';
+  let toc = '';
+  let skipped = [];
+  let pageSections = [];
+
+  try {
+    spinner.text = sitemapUrl;
+    const sites = await sitemap.fetch(sitemapUrl);
+    // Try to get lastmod from sitemap if available
+    const urlToLastMod = {};
+    if (sites.urls && Array.isArray(sites.urls)) {
+      for (const entry of sites.urls) {
+        if (entry.loc && entry.lastmod) urlToLastMod[entry.loc] = entry.lastmod;
+      }
+    }
+    const pageInfos = [];
+    const processUrl = async (url, index) => {
+      spinner.text = `Processing [${index + 1}/${sites.sites.length}]: ${url}`;
+      if (isExcluded(url)) { skipped.push({url, reason: 'excluded'}); return null; }
+      if (includePaths.length > 0 && !isIncluded(url)) { skipped.push({url, reason: 'not included'}); return null; }
+      const html = await fetchHtml(url);
+      if (!html) { skipped.push({url, reason: 'fetch failed'}); return null; }
+      let title = await getTitle(html);
+      if (!title) { skipped.push({url, reason: 'no title'}); return null; }
+      for (const command of replaceTitle) {
+        title = substituteTitle(title, command);
+      }
+      title = cleanTitle(title);
+      let $ = cheerio.load(html);
+      let mainHtml =
+        $('main').html() ||
+        $('[role=main]').html() ||
+        $('.content, #content, .post, .docs, .article').first().html() ||
+        $('article').html() ||
+        $('body').html() ||
+        html;
+      let markdown = turndownService.turndown(mainHtml);
+      // Try to extract H2/H3 sections for TOC anchors
+      const anchor = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      pageInfos.push({ title, url, description: await getDescription(html), markdown, anchor, lastmod: urlToLastMod[url] });
+      return true;
+    };
+    await processInBatches(sites.sites, processUrl, concurrency);
+    // Build TOC
+    toc += '# Table of Contents\n';
+    for (const page of pageInfos) {
+      toc += `- [${page.title}](#${page.anchor})\n`;
+    }
+    // Build output
+    output += `# ${options.title || 'Full Documentation'}\n\n`;
+    output += toc + '\n';
+    for (const page of pageInfos) {
+      output += `\n\n---\n\n`;
+      output += `## ${page.title}\n\n`;
+      output += `[${page.url}](${page.url})\n\n`;
+      if (page.description) output += `> ${page.description}\n\n`;
+      if (page.lastmod) output += `*Last modified: ${page.lastmod}*\n\n`;
+      output += page.markdown + '\n';
+    }
+    if (skipped.length > 0) {
+      output += '\n\n---\n\n## Skipped Pages\n';
+      for (const s of skipped) {
+        output += `- ${s.url} (${s.reason})\n`;
+      }
+    }
+    spinner.succeed('full content generated');
+    console.log(output);
+  } catch (error) {
+    spinner.fail('Error processing sitemap: ' + error.message);
+  }
+}
+
+module.exports = Object.assign(gen, { genFull });
