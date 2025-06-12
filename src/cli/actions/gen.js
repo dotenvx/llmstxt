@@ -9,7 +9,7 @@ const TurndownService = require('turndown')
 
 async function fetchHtml (url) {
   try {
-    const { body } = await request(url)
+    const { body } = await request(url, { maxRedirections: 10 })
     const rawHtml = await body.text()
     return rawHtml
   } catch (_error) {
