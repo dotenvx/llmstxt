@@ -1,15 +1,18 @@
 const { URL } = require('url')
 const cheerio = require('cheerio')
 const picomatch = require('picomatch')
-const { request } = require('undici')
+const { Agent } = require('undici')
 const Sitemapper = require('sitemapper')
 const sitemap = new Sitemapper()
 const ora = require('ora')
 const TurndownService = require('turndown')
 
+// Create an agent that follows redirects
+const httpAgent = new Agent({ maxRedirections: 10 })
+
 async function fetchHtml (url) {
   try {
-    const { body } = await request(url)
+    const { body } = await httpAgent.request(url)
     const rawHtml = await body.text()
     return rawHtml
   } catch (_error) {
@@ -62,7 +65,7 @@ function parseSubstitutionCommand (command) {
   }
 }
 
-function parseSection(uri) {
+function parseSection (uri) {
   try {
     const url = new URL(uri)
     const segments = url.pathname.split('/').filter(Boolean)
@@ -82,16 +85,7 @@ function substituteTitle (title, command) {
   return title.replace(pattern, replacement)
 }
 
-function isRootUrl (uri) {
-  try {
-    const url = new URL(uri)
-    return url.pathname === '/'
-  } catch (_error) {
-    return false
-  }
-}
-
-function capitalizeString(str) {
+function capitalizeString (str) {
   if (!str || typeof str !== 'string') {
     return ''
   }
@@ -99,10 +93,10 @@ function capitalizeString(str) {
   return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase()
 }
 
-function cleanTitle(title) {
-  if (!title) return '';
+function cleanTitle (title) {
+  if (!title) return ''
   // Remove leading '|' and whitespace
-  return title.replace(/^\|\s*/, '').trim();
+  return title.replace(/^\|\s*/, '').trim()
 }
 
 /**
@@ -112,26 +106,24 @@ function cleanTitle(title) {
  * @param {number} concurrency - Maximum number of concurrent operations
  * @returns {Array} - Results array
  */
-async function processInBatches(items, processor, concurrency = 10) {
-  const results = [];
-  const totalItems = items.length;
-  let processedItems = 0;
+async function processInBatches (items, processor, concurrency = 10) {
+  const results = []
+  const totalItems = items.length
 
   // Process items in batches
   for (let i = 0; i < totalItems; i += concurrency) {
-    const batch = items.slice(i, i + concurrency);
+    const batch = items.slice(i, i + concurrency)
     const batchPromises = batch.map(async (item, index) => {
-      const result = await processor(item, i + index);
-      processedItems++;
-      return result;
-    });
+      const result = await processor(item, i + index)
+      return result
+    })
 
     // Wait for the current batch to complete
-    const batchResults = await Promise.all(batchPromises);
-    results.push(...batchResults);
+    const batchResults = await Promise.all(batchPromises)
+    results.push(...batchResults)
   }
 
-  return results.filter(Boolean); // Remove null/undefined results
+  return results.filter(Boolean) // Remove null/undefined results
 }
 
 async function gen (sitemapUrl) {
@@ -154,33 +146,33 @@ async function gen (sitemapUrl) {
   try {
     spinner.text = sitemapUrl
     const sites = await sitemap.fetch(sitemapUrl)
-    
+
     // Define the URL processor function
     const processUrl = async (url, index) => {
       spinner.text = `Processing [${index + 1}/${sites.sites.length}]: ${url}`
 
       // path excluded - don't process it
       if (isExcluded(url)) {
-        return null;
+        return null
       }
 
       // path effectively excluded (by not being in the list of includes) - don't process it
       if (includePaths.length > 0 && !isIncluded(url)) {
-        return null;
+        return null
       }
 
       // html
       const html = await fetchHtml(url)
       if (!html) {
-        return null;
+        return null
       }
 
       // title
       let title = await getTitle(html)
       if (!title) {
-        return null;
+        return null
       }
-      for (command of replaceTitle) {
+      for (const command of replaceTitle) {
         title = substituteTitle(title, command)
       }
       title = cleanTitle(title)
@@ -190,24 +182,24 @@ async function gen (sitemapUrl) {
 
       // section
       const section = parseSection(url)
-      
-      return { title, url, description, section };
-    };
+
+      return { title, url, description, section }
+    }
 
     // Process URLs concurrently
-    const results = await processInBatches(sites.sites, processUrl, concurrency);
-    
+    const results = await processInBatches(sites.sites, processUrl, concurrency)
+
     // Organize results into sections
     for (const result of results) {
-      if (!result) continue;
-      
-      const { title, url, description, section } = result;
-      
+      if (!result) continue
+
+      const { title, url, description, section } = result
+
       // set up section
       sections[section] ||= []
 
       // add line
-      sections[section].push({ title, url, description });
+      sections[section].push({ title, url, description })
     }
   } catch (error) {
     console.error('Error processing sitemap:', error.message)
@@ -251,99 +243,98 @@ async function gen (sitemapUrl) {
   console.log(output)
 }
 
-async function genFull(sitemapUrl) {
-  const options = this.opts ? this.opts() : {};
-  const spinner = ora('generating full content').start();
-  const excludePaths = options.excludePath || [];
-  const includePaths = options.includePath || [];
-  const isExcluded = picomatch(excludePaths);
-  const isIncluded = picomatch(includePaths, { ignore: excludePaths });
-  const replaceTitle = options.replaceTitle || [];
-  const concurrency = options.concurrency || 5;
+async function genFull (sitemapUrl) {
+  const options = this.opts ? this.opts() : {}
+  const spinner = ora('generating full content').start()
+  const excludePaths = options.excludePath || []
+  const includePaths = options.includePath || []
+  const isExcluded = picomatch(excludePaths)
+  const isIncluded = picomatch(includePaths, { ignore: excludePaths })
+  const replaceTitle = options.replaceTitle || []
+  const concurrency = options.concurrency || 5
   // Configure Turndown for better markdown
   const turndownService = new TurndownService({
     codeBlockStyle: 'fenced',
     headingStyle: 'atx',
     bulletListMarker: '-',
     emDelimiter: '*',
-    hr: '---',
-  });
+    hr: '---'
+  })
   turndownService.addRule('table', {
     filter: 'table',
-    replacement: function(content, node) {
-      return '\n' + turndownService.turndown(node.outerHTML) + '\n';
+    replacement: function (content, node) {
+      return '\n' + turndownService.turndown(node.outerHTML) + '\n'
     }
-  });
-  let output = '';
-  let toc = '';
-  let skipped = [];
-  let pageSections = [];
+  })
+  let output = ''
+  let toc = ''
+  const skipped = []
 
   try {
-    spinner.text = sitemapUrl;
-    const sites = await sitemap.fetch(sitemapUrl);
+    spinner.text = sitemapUrl
+    const sites = await sitemap.fetch(sitemapUrl)
     // Try to get lastmod from sitemap if available
-    const urlToLastMod = {};
+    const urlToLastMod = {}
     if (sites.urls && Array.isArray(sites.urls)) {
       for (const entry of sites.urls) {
-        if (entry.loc && entry.lastmod) urlToLastMod[entry.loc] = entry.lastmod;
+        if (entry.loc && entry.lastmod) urlToLastMod[entry.loc] = entry.lastmod
       }
     }
-    const pageInfos = [];
+    const pageInfos = []
     const processUrl = async (url, index) => {
-      spinner.text = `Processing [${index + 1}/${sites.sites.length}]: ${url}`;
-      if (isExcluded(url)) { skipped.push({url, reason: 'excluded'}); return null; }
-      if (includePaths.length > 0 && !isIncluded(url)) { skipped.push({url, reason: 'not included'}); return null; }
-      const html = await fetchHtml(url);
-      if (!html) { skipped.push({url, reason: 'fetch failed'}); return null; }
-      let title = await getTitle(html);
-      if (!title) { skipped.push({url, reason: 'no title'}); return null; }
+      spinner.text = `Processing [${index + 1}/${sites.sites.length}]: ${url}`
+      if (isExcluded(url)) { skipped.push({ url, reason: 'excluded' }); return null }
+      if (includePaths.length > 0 && !isIncluded(url)) { skipped.push({ url, reason: 'not included' }); return null }
+      const html = await fetchHtml(url)
+      if (!html) { skipped.push({ url, reason: 'fetch failed' }); return null }
+      let title = await getTitle(html)
+      if (!title) { skipped.push({ url, reason: 'no title' }); return null }
       for (const command of replaceTitle) {
-        title = substituteTitle(title, command);
+        title = substituteTitle(title, command)
       }
-      title = cleanTitle(title);
-      let $ = cheerio.load(html);
-      let mainHtml =
+      title = cleanTitle(title)
+      const $ = cheerio.load(html)
+      const mainHtml =
         $('main').html() ||
         $('[role=main]').html() ||
         $('.content, #content, .post, .docs, .article').first().html() ||
         $('article').html() ||
         $('body').html() ||
-        html;
-      let markdown = turndownService.turndown(mainHtml);
+        html
+      const markdown = turndownService.turndown(mainHtml)
       // Try to extract H2/H3 sections for TOC anchors
-      const anchor = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      pageInfos.push({ title, url, description: await getDescription(html), markdown, anchor, lastmod: urlToLastMod[url] });
-      return true;
-    };
-    await processInBatches(sites.sites, processUrl, concurrency);
+      const anchor = title.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      pageInfos.push({ title, url, description: await getDescription(html), markdown, anchor, lastmod: urlToLastMod[url] })
+      return true
+    }
+    await processInBatches(sites.sites, processUrl, concurrency)
     // Build TOC
-    toc += '# Table of Contents\n';
+    toc += '# Table of Contents\n'
     for (const page of pageInfos) {
-      toc += `- [${page.title}](#${page.anchor})\n`;
+      toc += `- [${page.title}](#${page.anchor})\n`
     }
     // Build output
-    output += `# ${options.title || 'Full Documentation'}\n\n`;
-    output += toc + '\n';
+    output += `# ${options.title || 'Full Documentation'}\n\n`
+    output += toc + '\n'
     for (const page of pageInfos) {
-      output += `\n\n---\n\n`;
-      output += `## ${page.title}\n\n`;
-      output += `[${page.url}](${page.url})\n\n`;
-      if (page.description) output += `> ${page.description}\n\n`;
-      if (page.lastmod) output += `*Last modified: ${page.lastmod}*\n\n`;
-      output += page.markdown + '\n';
+      output += '\n\n---\n\n'
+      output += `## ${page.title}\n\n`
+      output += `[${page.url}](${page.url})\n\n`
+      if (page.description) output += `> ${page.description}\n\n`
+      if (page.lastmod) output += `*Last modified: ${page.lastmod}*\n\n`
+      output += page.markdown + '\n'
     }
     if (skipped.length > 0) {
-      output += '\n\n---\n\n## Skipped Pages\n';
+      output += '\n\n---\n\n## Skipped Pages\n'
       for (const s of skipped) {
-        output += `- ${s.url} (${s.reason})\n`;
+        output += `- ${s.url} (${s.reason})\n`
       }
     }
-    spinner.succeed('full content generated');
-    console.log(output);
+    spinner.succeed('full content generated')
+    console.log(output)
   } catch (error) {
-    spinner.fail('Error processing sitemap: ' + error.message);
+    spinner.fail('Error processing sitemap: ' + error.message)
   }
 }
 
-module.exports = Object.assign(gen, { genFull });
+module.exports = Object.assign(gen, { genFull })
