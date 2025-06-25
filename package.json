@@ -1,5 +1,5 @@
 {
-  "version": "0.7.0",
+  "version": "0.8.0",
   "name": "llmstxt",
   "description": "convert `sitemap.xml` to `llms.txt`",
   "author": "@motdotla",
