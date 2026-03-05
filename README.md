@@ -1,5 +1,11 @@
 # llmstxt
 
+<p align="center">
+  <br><br><br><br><br>
+  <strong>sponsored by <a href="https://dotenvx.com">dotenvx</a></strong>
+  <br><br><br><br><br>
+</p>
+
 > *generate `llms.txt`*–using your `sitemap.xml`. A `llms.txt` file is a curated list of your website's pages in markdown format, perfect for training or fine-tuning language models with your content.
 
 <p align="center"><br><img src="llmstxt.gif" width="500"><br></p>
