@@ -268,10 +268,19 @@ async function genFull(sitemapUrl) {
     emDelimiter: '*',
     hr: '---',
   });
+  // Configure Turndown for table content
+  const turndownServiceForTable = new TurndownService({
+    codeBlockStyle: 'fenced',
+    headingStyle: 'atx',
+    bulletListMarker: '-',
+    emDelimiter: '*',
+    hr: '---',
+  });
+  // add rule for table content
   turndownService.addRule('table', {
     filter: 'table',
     replacement: function(content, node) {
-      return '\n' + turndownService.turndown(node.outerHTML) + '\n';
+      return '\n' + turndownServiceForTable.turndown(node.outerHTML) + '\n';
     }
   });
   let output = '';
